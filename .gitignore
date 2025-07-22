@@ -6,3 +6,5 @@ workdir
 *demo
 logs
 __pycache__
+scripts/feature
+libs/__pycache__
