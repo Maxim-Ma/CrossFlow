@@ -136,7 +136,19 @@ class TrainState(object):
         self.step = torch.load(os.path.join(path, 'step.pth'))
         for key, val in self.__dict__.items():
             if key != 'step' and val is not None:
-                val.load_state_dict(torch.load(os.path.join(path, f'{key}.pth'), map_location='cpu'))
+                print(f'load {key} from {os.path.join(path, f"{key}.pth")}')
+                state = torch.load(os.path.join(path, f'{key}.pth'), map_location='cpu')
+                print(type(state))
+                print(state.keys())
+                # for i, group in enumerate(optimizer_state['param_groups']):
+                #     print(f"=== Param Group {i} ===")
+                #     print("Learning rate:", group.get('lr'))
+                #     print("Weight decay:", group.get('weight_decay'))
+                #     print("Betas:", group.get('betas'))
+                #     print("Eps:", group.get('eps', 'N/A'))
+                #     print("Momentum:", group.get('momentum', 'N/A'))
+                #     print("Num parameters:", len(group['params']))
+                val.load_state_dict(state)
 
     def resume(self, ckpt_root, step=None):
         if not os.path.exists(ckpt_root):
