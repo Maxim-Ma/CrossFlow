@@ -1,0 +1,8 @@
+results
+checkpoints
+assets
+runs
+workdir
+*demo
+logs
+__pycache__
