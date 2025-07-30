@@ -55,7 +55,6 @@ def evaluate(config):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    mp.set_start_method('spawn')
     accelerator = accelerate.Accelerator()
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
@@ -120,10 +119,10 @@ def evaluate(config):
         with torch.no_grad():
             del testbatch_img_blurred
         
-            _z_gaussian = torch.randn(_n_samples, *config.z_shape, device=device)
+            _z_gaussian = torch.randn(_n_samples, *config.z_shape, device=device) 
 
             if 'dimr' in config.nnet.name or 'dit' in config.nnet.name:
-                _z_x0, _mu, _log_var = nnet_ema(context, text_encoder = True, shape = _z_gaussian.shape, mask=token_mask)
+                _z_x0, _mu, _log_var = nnet_ema(context, text_encoder = True, shape = _z_gaussian.shape, mask=token_mask) # 随机性
                 _z_init = _z_x0.reshape(_z_gaussian.shape)
             else:
                 raise NotImplementedError
@@ -176,7 +175,7 @@ flags.mark_flags_as_required(["config"])
 flags.DEFINE_string("nnet_path", None, "The nnet to evaluate.")
 flags.DEFINE_string("prompt", None, "The prompt used for generation.")
 flags.DEFINE_string("output_path", None, "The path to output log.")
-flags.DEFINE_float("cfg", -1, 'cfg scale, will use the scale defined in the config file is not assigned')
+flags.DEFINE_float("cfg", -1, 'cfg scale, will use the scale defined in the config file if not assigned')
 flags.DEFINE_string("img_save_path", None, "The path to image log.")
 
 
@@ -191,4 +190,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn')
     app.run(main)

@@ -228,7 +228,7 @@ class JDBFeatureDataset(Dataset):
         self.file_list = []
         with open(json_path, 'r', encoding='utf-8') as file:
             for line in file:
-                self.file_list.append(json.loads(line)['img_path'])
+                self.file_list.append(json.loads(line)['img'])
 
     def __len__(self):
         return len(self.file_list)

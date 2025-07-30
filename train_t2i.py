@@ -31,7 +31,7 @@ def train(config):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    mp.set_start_method('spawn')
+    # mp.set_start_method('spawn')
     accelerator = accelerate.Accelerator()
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
@@ -64,6 +64,7 @@ def train(config):
     num_workers = 8
 
     train_dataset = dataset.get_split(split='train', labeled=True)
+    print('len:', len(train_dataset), train_dataset)
     train_dataset_loader = DataLoader(train_dataset, batch_size=mini_batch_size, shuffle=True, drop_last=True,
                                     num_workers=num_workers, pin_memory=True, persistent_workers=True)
 
@@ -143,7 +144,7 @@ def train(config):
         _batch_mask = _batch[2]
         _batch_token = _batch[3]
         _batch_caption = _batch[4]
-        _batch_img_ori = _batch[5]
+        _batch_img_ori = _batch[5] # 这是什么？
 
         _z = autoencoder.sample(_batch_img) 
             
@@ -259,8 +260,8 @@ def train(config):
                 train_state.save(os.path.join(config.ckpt_root, f'{train_state.step}.ckpt'))
             accelerator.wait_for_everyone()
 
-            fid = eval_step(n_samples=10000, sample_steps=50)  # calculate fid of the saved checkpoint
-            step_fid.append((train_state.step, fid))
+            # fid = eval_step(n_samples=10000, sample_steps=50)  # calculate fid of the saved checkpoint
+            # step_fid.append((train_state.step, fid))
 
             torch.cuda.empty_cache()
         accelerator.wait_for_everyone()
@@ -272,7 +273,7 @@ def train(config):
     train_state.load(os.path.join(config.ckpt_root, f'{step_best}.ckpt'))
     del metrics
     accelerator.wait_for_everyone()
-    eval_step(n_samples=config.sample.n_samples, sample_steps=config.sample.sample_steps)
+    # eval_step(n_samples=config.sample.n_samples, sample_steps=config.sample.sample_steps)
 
 
 
@@ -325,4 +326,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn')
     app.run(main)

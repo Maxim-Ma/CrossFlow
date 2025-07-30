@@ -25,14 +25,88 @@ from diffusion.flow_matching import FlowMatching, ODEFlowMatchingSolver, ODEEule
 from tools.fid_score import calculate_fid_given_paths
 from tools.clip_score import ClipSocre
 
+import time, contextlib
+
+@contextlib.contextmanager
+def tic(tag, device="cuda"):
+    start_cpu = time.perf_counter()
+    start_gpu = torch.cuda.Event(enable_timing=True)
+    end_gpu   = torch.cuda.Event(enable_timing=True)
+    if torch.cuda.is_available():
+        start_gpu.record()
+    yield
+    if torch.cuda.is_available():
+        end_gpu.record()
+        torch.cuda.synchronize()          # 等 GPU 事件完成
+        gpu_ms = start_gpu.elapsed_time(end_gpu)
+    else:
+        gpu_ms = -1
+    cpu_ms = (time.perf_counter() - start_cpu) * 1000
+    logging.info(f"[TIMER] {tag:15s}  CPU: {cpu_ms:7.1f} ms  GPU: {gpu_ms:7.1f} ms")
+
+
+# 全局禁用 Flash 和 Mem‑Efficient SDP
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)   # 显式启用 math kernel
+
+import torch
+from contextlib import suppress
+
+def sizeof_fmt(num, suffix="B"):
+    """把字节数转成易读单位"""
+    for unit in ["", "K", "M", "G", "T"]:
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}P{suffix}"
+
+def summary_mem(model, optimizer=None):
+    """
+    打印模型（和可选优化器）的参数量与显存占用
+    model:  nn.Module
+    optimizer: torch.optim.Optimizer | None
+    """
+    param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+    buffer_bytes = sum(b.numel() * b.element_size() for b in model.buffers())
+
+    total_param = sum(p.numel() for p in model.parameters())
+    trainable_param = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print("=" * 60)
+    print(f"可训练参数  : {trainable_param:,}")
+    print(f"全部参数   : {total_param:,}")
+    print(f"参数显存   : {sizeof_fmt(param_bytes)}")
+    print(f"Buffer显存: {sizeof_fmt(buffer_bytes)}")
+
+    if optimizer is not None:
+        opt_bytes = 0
+        for state in optimizer.state.values():
+            for v in state.values():
+                if torch.is_tensor(v):
+                    opt_bytes += v.numel() * v.element_size()
+        print(f"优化器状态 : {sizeof_fmt(opt_bytes)}")
+        print(f"—— 参数 + Buffer + Optim : {sizeof_fmt(param_bytes + buffer_bytes + opt_bytes)}")
+    else:
+        print(f"—— 参数 + Buffer : {sizeof_fmt(param_bytes + buffer_bytes)}")
+    print("=" * 60)
+
+# 用法示例
+# model = ...
+# optimizer = ...
+# summary_mem(model, optimizer)
+
 
 def train(config):
     if config.get('benchmark', False):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    mp.set_start_method('spawn')
-    accelerator = accelerate.Accelerator()
+    # grad_acc_steps = config.train.get("grad_accum_steps", 1)
+
+    accelerator = accelerate.Accelerator(
+        #  gradient_accumulation_steps=grad_acc_steps,
+    )
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
     logging.info(f'Process {accelerator.process_index} using device: {device}')
@@ -40,13 +114,21 @@ def train(config):
     config.mixed_precision = accelerator.mixed_precision
     config = ml_collections.FrozenConfigDict(config)
 
+    logging.info(f"rank={accelerator.process_index}  reached checkpoint-A")
+
+
     assert config.train.batch_size % accelerator.num_processes == 0
     mini_batch_size = config.train.batch_size // accelerator.num_processes
+
+    logging.info(f"rank={accelerator.process_index}  reached checkpoint-B")
 
     if accelerator.is_main_process:
         os.makedirs(config.ckpt_root, exist_ok=True)
         os.makedirs(config.sample_dir, exist_ok=True)
+
+    logging.info(f"rank={accelerator.process_index}  reached checkpoint-C")
     accelerator.wait_for_everyone()
+    # logging.info(f"rank={accelerator.process_index}  reached checkpoint-D")
     if accelerator.is_main_process:
         wandb.init(dir=os.path.abspath(config.workdir), project=f'uvit_{config.dataset.name}', config=config.to_dict(),
                    name=config.hparams, job_type='train', mode='offline')
@@ -57,21 +139,30 @@ def train(config):
         builtins.print = lambda *args: None
     logging.info(f'Run on {accelerator.num_processes} devices')
 
+    logging.info("before get_dataset")
     dataset = get_dataset(**config.dataset)
+    logging.info("dataset ready")
+
     assert os.path.exists(dataset.fid_stat)
 
     gpu_model = torch.cuda.get_device_name(torch.cuda.current_device())
+
     num_workers = 8
+    persistent_workers = False if accelerator.num_processes > 1 else True
 
     train_dataset = dataset.get_split(split='train', labeled=True)
+    logging.info("before dataloader")
     train_dataset_loader = DataLoader(train_dataset, batch_size=mini_batch_size, shuffle=True, drop_last=True,
-                                    num_workers=num_workers, pin_memory=True, persistent_workers=True)
+                                    num_workers=num_workers, pin_memory=True, persistent_workers=persistent_workers)
+    logging.info("dataloader ready")
 
     test_dataset = dataset.get_split(split='test', labeled=True)  # for sampling
     test_dataset_loader = DataLoader(test_dataset, batch_size=config.sample.mini_batch_size, shuffle=True, drop_last=True,
-                                     num_workers=num_workers, pin_memory=True, persistent_workers=True)
+                                     num_workers=num_workers, pin_memory=True, persistent_workers=persistent_workers)
 
     train_state = utils.initialize_train_state(config, device)
+    summary_mem(train_state.nnet, train_state.optimizer)
+    summary_mem(train_state.nnet.context_encoder)
     nnet, nnet_ema, optimizer, train_dataset_loader, test_dataset_loader = accelerator.prepare(
         train_state.nnet, train_state.nnet_ema, train_state.optimizer, train_dataset_loader, test_dataset_loader)
     lr_scheduler = train_state.lr_scheduler
@@ -106,7 +197,8 @@ def train(config):
     def get_data_generator():
         while True:
             for data in tqdm(train_dataset_loader, disable=not accelerator.is_main_process, desc='epoch'):
-                yield data
+                with tic("dataloader"):
+                    yield data
 
     data_generator = get_data_generator()
 
@@ -133,58 +225,71 @@ def train(config):
     _flow_mathcing_model = FlowMatching()
 
     def train_step(_batch, _ss_empty_context):
-        _metrics = dict()
-        optimizer.zero_grad()
+        with tic("data→cuda"):
+            _metrics = dict()
+            optimizer.zero_grad()
 
-        assert len(_batch)==6
-        assert not config.dataset.cfg
-        _batch_img = _batch[0]
-        _batch_con = _batch[1]
-        _batch_mask = _batch[2]
-        _batch_token = _batch[3]
-        _batch_caption = _batch[4]
-        _batch_img_ori = _batch[5]
+            assert len(_batch)==6
+            assert not config.dataset.cfg
+            _batch_img = _batch[0]
+            _batch_con = _batch[1]
+            _batch_mask = _batch[2]
+            _batch_token = _batch[3]
+            _batch_caption = _batch[4]
+            _batch_img_ori = _batch[5]
 
-        _z = autoencoder.sample(_batch_img)
+            _z = autoencoder.sample(_batch_img)
 
-        loss, loss_dict = _flow_mathcing_model(_z, nnet, loss_coeffs=config.loss_coeffs, cond=_batch_con, con_mask=_batch_mask, batch_img_clip=_batch_img_ori, \
-            nnet_style=config.nnet.name, text_token=_batch_token, model_config=config.nnet.model_args, all_config=config, training_step=train_state.step)
+        with tic("forward"):
+            loss, loss_dict = _flow_mathcing_model(_z, nnet, loss_coeffs=config.loss_coeffs, cond=_batch_con, con_mask=_batch_mask, batch_img_clip=_batch_img_ori, \
+                nnet_style=config.nnet.name, text_token=_batch_token, model_config=config.nnet.model_args, all_config=config, training_step=train_state.step)
 
-        _metrics['loss'] = accelerator.gather(loss.detach()).mean()
-        for key in loss_dict.keys():
-            _metrics[key] = accelerator.gather(loss_dict[key].detach()).mean()
-        accelerator.backward(loss.mean())
-        optimizer.step()
-        lr_scheduler.step()
-        train_state.ema_update(config.get('ema_rate', 0.9999))
-        train_state.step += 1
+            _metrics['loss'] = accelerator.gather(loss.detach()).mean()
+            for key in loss_dict.keys():
+                _metrics[key] = accelerator.gather(loss_dict[key].detach()).mean()
+        
+        with tic("backward"):
+            accelerator.backward(loss.mean())
+        with tic("optimizer"):
+            optimizer.step()
+            lr_scheduler.step()
+        with tic("ema_update"):
+            train_state.ema_update(config.get('ema_rate', 0.9999))
+            train_state.step += 1
         return dict(lr=train_state.optimizer.param_groups[0]['lr'], **_metrics)
 
-    def sample(nnet_ema, _n_samples, _sample_steps, context=None, caption=None, testbatch_img_blurred=None, two_stage_generation=-1, token_mask=None, return_clipScore=False, ClipSocre_model=None):
-        with torch.no_grad():
-            _z_gaussian = torch.randn(_n_samples, *config.z_shape, device=device)
+    @torch.no_grad()
+    def sample(nnet_ema, n_samples, _sample_steps, context=None, caption=None, testbatch_img_blurred=None, two_stage_generation=-1, token_mask=None, return_clipScore=False, ClipSocre_model=None):
+        shape = (n_samples, *config.z_shape) 
 
-            _z_x0, _mu, _log_var = nnet_ema(context, text_encoder = True, shape = _z_gaussian.shape, mask=token_mask)
-            _z_init = _z_x0.reshape(_z_gaussian.shape)
+        _z_x0, _mu, _log_var = nnet_ema(context, text_encoder = True, shape = shape, mask=token_mask)
+        z1 = _z_x0.reshape(shape)
 
-            assert config.sample.scale > 1
-            _cfg = config.sample.scale
+        assert config.sample.scale > 1
+        scale = config.sample.scale
 
-            has_null_indicator = hasattr(config.nnet.model_args, "cfg_indicator")
+        has_null_indicator = hasattr(config.nnet.model_args, "cfg_indicator")
 
-            with torch.no_grad():
-                _z = nnet_ema(_z_init, t=1, r=0)
+        dt = 1.0 / _sample_steps
+        ts = torch.linspace(1.0, 0.0, _sample_steps+1, device=device)[1:] 
+        z = z1
 
-            # ode_solver = ODEEulerFlowMatchingSolver(nnet_ema, step_size_type="step_in_dsigma", guidance_scale=_cfg)
-            # _z, _ = ode_solver.sample(x_T=_z_init, batch_size=_n_samples, sample_steps=_sample_steps, unconditional_guidance_scale=_cfg, has_null_indicator=has_null_indicator)
-
-            image_unprocessed = decode(_z)
-
-            if return_clipScore:
-                clip_score = ClipSocre_model.calculate_clip_score(caption, image_unprocessed)
-                return image_unprocessed, clip_score
+        for t in ts:
+            if has_null_indicator:
+                v_cond = nnet_ema(z, t=t, r=torch.zeros(n_samples, device=device), null_indicator=torch.tensor([False] * n_samples).to(device))
+                v_uncond = nnet_ema(z, t=t, r=torch.zeros(n_samples, device=device), null_indicator=torch.tensor([True] * n_samples).to(device))
+                v = v_uncond + scale * (v_cond - v_uncond)
             else:
-                return image_unprocessed
+                raise NotImplementedError("Only support has_null_indicator=True for now")
+            z = z - dt * v
+
+        image_unprocessed = decode(z)
+
+        if return_clipScore:
+            clip_score = ClipSocre_model.calculate_clip_score(caption, image_unprocessed)
+            return image_unprocessed, clip_score
+        else:
+            return image_unprocessed
 
     def eval_step(n_samples, sample_steps):
         logging.info(f'eval_step: n_samples={n_samples}, sample_steps={sample_steps}, algorithm=ODE_Euler_Flow_Matching_Solver, '
@@ -223,9 +328,10 @@ def train(config):
 
     step_fid = []
     while train_state.step < config.train.n_steps:
-        nnet.train()
-        batch = tree_map(lambda x: x, next(data_generator))
-        metrics = train_step(batch, ss_empty_context)
+        with tic("whole_step"):
+            nnet.train()
+            batch = tree_map(lambda x: x, next(data_generator))
+            metrics = train_step(batch, ss_empty_context)
 
         nnet.eval()
         if accelerator.is_main_process and train_state.step % config.train.log_interval == 0:
@@ -245,7 +351,7 @@ def train(config):
                 token_mask = None
             else:
                 raise NotImplementedError
-            samples = ode_fm_solver_sample(nnet_ema, _n_samples=config.train.n_samples_eval, _sample_steps=50, context=contexts, token_mask=token_mask)
+            samples = sample(nnet_ema, n_samples=config.train.n_samples_eval, _sample_steps=8, context=contexts, token_mask=token_mask)
             samples = make_grid(dataset.unpreprocess(samples), 5)
             if accelerator.is_main_process:
                 save_image(samples, os.path.join(config.sample_dir, f'{train_state.step}.png'))
@@ -262,8 +368,8 @@ def train(config):
                 train_state.save(os.path.join(config.ckpt_root, f'{train_state.step}.ckpt'))
             accelerator.wait_for_everyone()
 
-            fid = eval_step(n_samples=10000, sample_steps=50)  # calculate fid of the saved checkpoint
-            step_fid.append((train_state.step, fid))
+            # fid = eval_step(n_samples=10000, sample_steps=50)  # calculate fid of the saved checkpoint
+            # step_fid.append((train_state.step, fid))
 
             torch.cuda.empty_cache()
         accelerator.wait_for_everyone()
@@ -275,7 +381,7 @@ def train(config):
     train_state.load(os.path.join(config.ckpt_root, f'{step_best}.ckpt'))
     del metrics
     accelerator.wait_for_everyone()
-    eval_step(n_samples=config.sample.n_samples, sample_steps=config.sample.sample_steps)
+    # eval_step(n_samples=config.sample.n_samples, sample_steps=config.sample.sample_steps)
 
 
 
@@ -328,4 +434,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    # mp.set_start_method('spawn', force=True)
     app.run(main)

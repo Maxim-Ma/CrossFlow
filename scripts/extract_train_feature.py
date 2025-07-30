@@ -46,15 +46,15 @@ def center_crop_arr(pil_image, image_size):
 
 def main(bz = 16):
 
-    json_path = '/path/to/JourneyDB_demo/img_text_pair.jsonl'
-    root_path = '/path/to/JourneyDB_demo/imgs'
+    json_path = '/data/suizhi/data/training_JourneyDB/img_text_pair.jsonl'
+    root_path = '/data/suizhi/data/training_JourneyDB/imgs'
 
     dicts_list = []
     with open(json_path, 'r', encoding='utf-8') as file:
         for line in file:
             dicts_list.append(json.loads(line))
 
-    save_dir = f'feature'
+    save_dir = '../data/training_JourneyDB/features'
     device = "cuda"
     recreate_folder(save_dir)
 
@@ -67,7 +67,7 @@ def main(bz = 16):
     clip.to(device)
 
     # T5 model:
-    t5 = T5Embedder(device=device)
+    t5 = T5Embedder(device=device, cache_dir='/data/suizhi/.cache/IF_')
 
     idx = 0
     batch_img_256 = []
@@ -76,15 +76,15 @@ def main(bz = 16):
     batch_name = []
     for i, sample in enumerate(tqdm(dicts_list)):
         try:
-            pil_image = Image.open(os.path.join(root_path,sample['img_path']))
+            pil_image = Image.open(os.path.join(root_path,sample['img']))
             caption = sample['prompt']
-            img_name = sample['img_path'].replace('.jpg','')
+            img_name = sample['img'].replace('.jpg','')
             
             pil_image.load()
             pil_image = pil_image.convert("RGB")
         except:
             with open("failed_file.txt", 'a+') as file: 
-                file.write(sample['img_path'] + "\n")
+                file.write(sample['img'] + "\n")
             continue
 
         image_256 = center_crop_arr(pil_image, image_size=256)
@@ -144,9 +144,10 @@ def main(bz = 16):
                         'batch_caption': bc}
                 try:
                     np.save(tar_path_name, data)
+                    # print(tar_path_name)
                     idx += 1
                 except:
-                    pass
+                    raise Exception(tar_path_name)
             
             batch_img_256 = []
             batch_img_512 = []

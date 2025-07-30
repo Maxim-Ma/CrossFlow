@@ -115,8 +115,8 @@ def get_config():
         name='JDB_demo_features',                               # dataset name
         resolution=512,                                         # dataset resolution
         llm='clip',                                             # language model to generate language embedding
-        train_path='/data/qihao/dataset/JDB_demo_feature/',     # training set path
-        val_path='/data/qihao/dataset/coco_val_features/',      # val set path
+        train_path='/data/suizhi/data/JourneyDB_demo/',     # training set path
+        val_path='/data/suizhi/data/val_dataset/',           # val set path
         cfg=False
     )
 

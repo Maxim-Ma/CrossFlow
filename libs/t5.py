@@ -69,16 +69,18 @@ class T5Embedder:
         self.cache_dir = cache_dir or os.path.expanduser('~/.cache/IF_')
         self.dir_or_name = dir_or_name
 
-        tokenizer_path, path = dir_or_name, dir_or_name
+        # tokenizer_path, path = dir_or_name, dir_or_name
         if dir_or_name in self.available_models:
             cache_dir = os.path.join(self.cache_dir, dir_or_name)
-            for filename in [
-                'config.json', 'special_tokens_map.json', 'spiece.model', 'tokenizer_config.json',
-                'pytorch_model.bin.index.json', 'pytorch_model-00001-of-00002.bin', 'pytorch_model-00002-of-00002.bin'
-            ]:
-                hf_hub_download(repo_id=f'DeepFloyd/{dir_or_name}', filename=filename, cache_dir=cache_dir,
-                                force_filename=filename, token=self.hf_token)
-            tokenizer_path, path = cache_dir, cache_dir
+            # for filename in [
+            #     'config.json', 'special_tokens_map.json', 'spiece.model', 'tokenizer_config.json',
+            #     'pytorch_model.bin.index.json', 'pytorch_model-00001-of-00002.bin', 'pytorch_model-00002-of-00002.bin'
+            # ]:
+            #     tar = hf_hub_download(repo_id=f'DeepFloyd/{dir_or_name}', filename=filename, cache_dir=cache_dir,
+            #                     force_filename=filename, token=self.hf_token)
+                # print(filename, tar)
+            # tokenizer_path, path = cache_dir, cache_dir
+            repo_id = f'DeepFloyd/{dir_or_name}'
         else:
             cache_dir = os.path.join(self.cache_dir, 't5-v1_1-xxl')
             for filename in [
@@ -87,9 +89,18 @@ class T5Embedder:
                 hf_hub_download(repo_id='DeepFloyd/t5-v1_1-xxl', filename=filename, cache_dir=cache_dir,
                                 force_filename=filename, token=self.hf_token)
             tokenizer_path = cache_dir
+            raise "cannot reach here"
 
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-        self.model = T5EncoderModel.from_pretrained(path, **t5_model_kwargs).eval()
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            repo_id,
+            cache_dir=cache_dir,
+            token=self.hf_token
+        )
+        self.model = T5EncoderModel.from_pretrained(
+            repo_id,
+            cache_dir=cache_dir,
+            **t5_model_kwargs
+        ).eval()
 
     def get_text_embeddings(self, texts):
         texts = [self.text_preprocessing(text) for text in texts]

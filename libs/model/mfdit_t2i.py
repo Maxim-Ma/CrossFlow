@@ -96,8 +96,8 @@ class DiTBlock(nn.Module):
         )
 
     def forward(self, x, c):
-        return torch.utils.checkpoint.checkpoint(self._forward, x, c)
-        # return self._forward(x, c)
+        # return torch.utils.checkpoint.checkpoint(self._forward, x, c)
+        return self._forward(x, c)
 
     def _forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
@@ -174,9 +174,23 @@ class MFDiT(nn.Module):
 
 
         self.open_clip, _, self.open_clip_preprocess = open_clip.create_model_and_transforms('ViT-L-16-SigLIP-256', pretrained=None)
-        self.open_clip_output = Adaptor(input_dim=1024,
-                                    tar_dim=config.channels * config.latent_size * config.latent_size
+        # self.open_clip_output = Adaptor(input_dim=1024,
+        #                             tar_dim=config.channels * config.latent_size * config.latent_size
+        #                             )
+
+        if config.latent_size <= 32: 
+            # for 256px generation
+            self.open_clip_output = Mlp(in_features=1024, 
+                                        hidden_features=config.channels * config.latent_size * config.latent_size, 
+                                        out_features=config.channels * config.latent_size * config.latent_size, 
+                                        norm_layer=nn.LayerNorm,
                                     )
+        else: 
+            # for 512px generation
+            self.open_clip_output = Adaptor(input_dim=1024, 
+                                        tar_dim=config.channels * config.latent_size * config.latent_size 
+                                        )
+
         del self.open_clip.text
         del self.open_clip.logit_bias
 
@@ -363,46 +377,46 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 def MFDiT_H_2(config, **kwargs):
     return MFDiT(config=config, depth=36, hidden_size=1280, patch_size=2, num_heads=20, **kwargs)
 
-def MFDiT_XL_2(config, **kwargs):
-    return DiT(config=config, depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)
+# def MFDiT_XL_2(config, **kwargs):
+#     return DiT(config=config, depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)
 
-def MFDiT_XL_4(config, **kwargs):
-    return DiT(config=config, depth=28, hidden_size=1152, patch_size=4, num_heads=16, **kwargs)
+# def MFDiT_XL_4(config, **kwargs):
+#     return DiT(config=config, depth=28, hidden_size=1152, patch_size=4, num_heads=16, **kwargs)
 
-def MFDiT_XL_8(config, **kwargs):
-    return DiT(config=config, depth=28, hidden_size=1152, patch_size=8, num_heads=16, **kwargs)
+# def MFDiT_XL_8(config, **kwargs):
+#     return DiT(config=config, depth=28, hidden_size=1152, patch_size=8, num_heads=16, **kwargs)
 
-def MFDiT_L_2(config, **kwargs):
-    return DiT(config=config, depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kwargs)
+# def MFDiT_L_2(config, **kwargs):
+#     return DiT(config=config, depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kwargs)
 
-def MFDiT_L_4(config, **kwargs):
-    return DiT(config=config, depth=24, hidden_size=1024, patch_size=4, num_heads=16, **kwargs)
+# def MFDiT_L_4(config, **kwargs):
+#     return DiT(config=config, depth=24, hidden_size=1024, patch_size=4, num_heads=16, **kwargs)
 
-def MFDiT_L_8(config, **kwargs):
-    return DiT(config=config, depth=24, hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
+# def MFDiT_L_8(config, **kwargs):
+#     return DiT(config=config, depth=24, hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
 
-def DiT_B_2(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=768, patch_size=2, num_heads=12, **kwargs)
+def MFDiT_B_2(config, **kwargs):
+    return MFDiT(config=config, depth=12, hidden_size=768, patch_size=2, num_heads=12, **kwargs)
 
-def DiT_B_4(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=768, patch_size=4, num_heads=12, **kwargs)
+# def DiT_B_4(config, **kwargs):
+#     return DiT(config=config, depth=12, hidden_size=768, patch_size=4, num_heads=12, **kwargs)
 
-def DiT_B_8(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=768, patch_size=8, num_heads=12, **kwargs)
+# def DiT_B_8(config, **kwargs):
+#     return DiT(config=config, depth=12, hidden_size=768, patch_size=8, num_heads=12, **kwargs)
 
-def DiT_S_2(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
+# def DiT_S_2(config, **kwargs):
+#     return DiT(config=config, depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
 
-def DiT_S_4(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=384, patch_size=4, num_heads=6, **kwargs)
+# def DiT_S_4(config, **kwargs):
+#     return DiT(config=config, depth=12, hidden_size=384, patch_size=4, num_heads=6, **kwargs)
 
-def DiT_S_8(config, **kwargs):
-    return DiT(config=config, depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
+# def DiT_S_8(config, **kwargs):
+#     return DiT(config=config, depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
 
 
-DiT_models = {
-    'DiT-XL/2': DiT_XL_2,  'DiT-XL/4': DiT_XL_4,  'DiT-XL/8': DiT_XL_8,
-    'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
-    'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
-    'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
-}
+# DiT_models = {
+#     'DiT-XL/2': DiT_XL_2,  'DiT-XL/4': DiT_XL_4,  'DiT-XL/8': DiT_XL_8,
+#     'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
+#     'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
+#     'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
+# }

@@ -25,8 +25,8 @@ def main(resolution=256):
     print(args)
 
     if args.split == "val":
-        datas = MSCOCODatabase(root='/data/qihao/dataset/coco2014/val2014',
-                             annFile='/data/qihao/dataset/coco2014/annotations/captions_val2014.json',
+        datas = MSCOCODatabase(root='/data/suizhi/data/coco2014/val2014',
+                               annFile='/data/suizhi/data/coco2014/annotations/captions_val2014.json',
                              size=resolution)
         save_dir = f'val'
     else:

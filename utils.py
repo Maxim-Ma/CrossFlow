@@ -64,8 +64,8 @@ def get_nnet(name, **kwargs):
         from libs.model.dit_t2i import DiT_H_2
         return DiT_H_2(kwargs["model_args"])
     elif name == 'mfdit':
-        from libs.model.mfdit_t2i import MFDiT_H_2
-        return MFDiT_H_2(kwargs["model_args"])
+        from libs.model.mfdit_t2i import MFDiT_H_2, MFDiT_B_2
+        return MFDiT_B_2(kwargs["model_args"])
     else:
         raise NotImplementedError(name)
 

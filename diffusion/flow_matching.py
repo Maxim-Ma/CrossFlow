@@ -403,6 +403,7 @@ class FlowMatching(nn.Module):
 
         x0, mu, log_var = nnet(cond, text_encoder = True, shape = x_start.shape, mask = con_mask)
 
+
         ############ loss for Text VE
         if batch_img_clip.shape[-1] == 512:
             recon_gt = self.resizer(batch_img_clip)
@@ -552,12 +553,18 @@ class FlowMatching(nn.Module):
             noise=None,
     ):
         """
-        CrossFLow training for DiT
+        CrossFLow training for MFDiT
         """
 
         assert noise is None
 
         x0, mu, log_var = nnet(cond, text_encoder = True, shape = x_start.shape, mask = con_mask)
+
+        
+        # print("Shapes:")
+        # print(x0.shape)
+        # print(x_start.shape)
+
 
         ############ loss for Text VE
         if batch_img_clip.shape[-1] == 512:
@@ -591,10 +598,13 @@ class FlowMatching(nn.Module):
         else:
             null_indicator = None
 
-        z = self.psi(t, x=noise, x1=x_start)
-        # prediction = nnet(z, t = t, r = r, null_indicator = null_indicator)
+        e = noise
+        x = x_start
+        t_ = self.expand_t(t, x)
+        r_ = self.expand_t(r, x)
 
-        v = self.Dt_psi(t, x=noise, x1=x_start)
+        z = (1 - t_) * x + t_ * e 
+        v = e - x
 
         model_partial = partial(nnet, null_indicator=null_indicator)
 
@@ -603,8 +613,15 @@ class FlowMatching(nn.Module):
             (z, t, r),
             (v, torch.ones_like(t), torch.zeros_like(r)), # v_hat
         )
+        
+        # u, dudt = torch.autograd.functional.jvp(
+        #     lambda z, t, r: model_partial(z, t, r),
+        #     (z, t, r),
+        #     (v, torch.ones_like(t), torch.zeros_like(r)), # v_hat
+        #     create_graph=True,
+        # )
 
-        u_tgt = v - (t - r) * dudt
+        u_tgt = v - (t_ - r_) * dudt
 
         error = u - u_tgt.detach()
 
